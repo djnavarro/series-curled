@@ -1,26 +1,32 @@
-library(tidyverse)
+# this version mimics the original "water colours" system fairly closely
+
+sys_id <- "01"
+output_dir <- here::here("output", sys_id)
+if (!dir.exists(output_dir)) dir.create(output_dir)
 
 import_halftone <- function(base, channel, x_sample, y_sample) {
 
-  channel_index <- channel %>%
+  channel_index <- channel |>
     switch("red" = 1, "green" = 2, "blue" = 3)
 
-  halftone_image <- base[, , channel_index] %>%
+  halftone_image <- base[, , channel_index] |>
     halftoner::halftone(x.samp = x_sample, y.samp = y_sample)
 
-  return(tibble(
+  dat <- tibble::tibble(
     x = halftone_image[[1]][,2],
     y = halftone_image[[1]][,1],
     size = halftone_image[[2]],
     shade = channel
-  ))
+  )
+  return(dat)
 }
 
 import_image <- function(image, x_sample = 500, y_sample = 500) {
 
-  base <- image %>%
-    jpeg::readJPEG() %>%
-    as.array()
+  base <- image |>
+    jpeg::readJPEG() |>
+    as.array() |>
+    aperm(c(2, 1, 3))
 
   halftone_r <- import_halftone(base, "red", x_sample, y_sample)
   halftone_g <- import_halftone(base, "green", x_sample, y_sample)
@@ -34,22 +40,66 @@ import_image <- function(image, x_sample = 500, y_sample = 500) {
     maxColorValue = 1.0
   )
 
-  return(tibble(
+  dat <- tibble::tibble(
     x = halftone_r$x / x_sample * 200,
     y = halftone_r$y / y_sample * 200,
     size = merged_size,
     shade = merged_shade
-  ))
+  )
+
+  return(dat)
 }
 
-curled <- function(image, title = "", seed = 4,
-                         resolutions =  c(500, 1000, 2000, 4000, 8000),
-                         types = c(".png", ".jpg")) {
+unfold <- function(
+  data,
+  iterations,
+  scale,
+  octaves,
+  noise = NULL,
+  fractal = NULL,
+  ...
+) {
 
+  if (is.null(noise)) noise <- ambient::gen_simplex
+  if (is.null(fractal)) fractal <- ambient::billow
+  seed <- data$seed[1]
+  data$iteration <- 1
+
+  do_step <- function(data, iter) {
+    n <- nrow(data)
+    noise <- ambient::curl_noise(
+      x = data$x,
+      y = data$y,
+      seed = seed,
+      generator = ambient::fracture,
+      noise = noise,
+      fractal = fractal,
+      octaves = octaves,
+      ...
+    )
+    data$iteration <- iter
+    data$x <- data$x + noise$x * scale
+    data$y <- data$y + noise$y * scale
+    return(data)
+  }
+  state <- purrr::accumulate(
+    .x = (1:iterations) + 1,
+    .f = do_step,
+    .init = data
+  )
+  state <- dplyr::bind_rows(state)
+  return(state)
+}
+
+curled <- function(
+  image,
+  seed = 4,
+  resolutions =  c(500, 2000),
+  types = c("png", "jpg")
+) {
 
   image_path <- fs::path("input", paste0("input_", image, ".jpg"))
-  build_msg <- paste("building from", image_path)
-  message(build_msg)
+  message(paste("building from", image_path))
 
   ht <- import_image(here::here(image_path))
 
@@ -58,80 +108,78 @@ curled <- function(image, title = "", seed = 4,
 
   set.seed(seed)
 
-  ht <- ht %>%
-    filter(size > min_size) %>%
-    mutate(size = if_else(size > max_size, .5, size)) %>%
-    mutate(
+  ht <- ht |>
+    dplyr::filter(size > min_size) |>
+    dplyr::mutate(
+      size = dplyr::if_else(size > max_size, .5, size),
       id = 1,
       seed = seed,
-      ind = 1:n(),
+      ind = seq_len(dplyr::n()),
       type = "halftone"
     )
 
   its <- 80
 
-  dat <- ht %>%
-    mutate(
+  dat <- ht |>
+    dplyr::mutate(
       x = x * .01,
       y = y * .01
-    ) %>%
-    jasmines::unfold_breeze(
+    ) |>
+    unfold(
       iterations = its,
-      drift = 0,
       scale = .0001,
       octaves = 10
     )
 
   compute_limit <- function(data, column, border = .04) {
-    values <- data[[column]][data$time == 1]
+    values <- data[[column]][data$iteration == 1]
     range <- c(1 - max(values), 1 - min(values))
     limit <- range + c(1, -1) * border
     return(limit)
   }
 
-  size_decay <- function(size, time) {
-    size * 8 * abs((its - time)/its)
-  }
-
-  pic <- ggplot(dat) +
-    geom_point(
-      mapping = aes(
+  pic <- ggplot2::ggplot(dat) +
+    ggplot2::geom_point(
+      mapping = ggplot2::aes(
         x = 1 - x,
         y = 1 - y,
         color = shade,
-        size = size_decay(size, time)
+        size = size * 12 * abs((its - iteration)/its)
       ),
       alpha = 1,
       stroke = 0,
       show.legend = FALSE
     ) +
-    coord_cartesian(
+    ggplot2::coord_cartesian(
       xlim = compute_limit(dat, "x"),
       ylim = compute_limit(dat, "y")
     ) +
-    scale_x_continuous(name = NULL, expand = c(0,0), breaks = NULL) +
-    scale_y_continuous(name = NULL, expand = c(0,0), breaks = NULL) +
-    scale_size_identity() +
-    scale_colour_identity() +
-    scale_alpha_continuous(range = c(0, 1)) +
-    theme_void() +
-    theme(plot.background = element_rect(fill = "white"))
+    ggplot2::scale_x_continuous(name = NULL, expand = c(0, 0), breaks = NULL) +
+    ggplot2::scale_y_continuous(name = NULL, expand = c(0, 0), breaks = NULL) +
+    ggplot2::scale_size_identity() +
+    ggplot2::scale_colour_identity() +
+    ggplot2::scale_alpha_continuous(range = c(0, 1)) +
+    ggplot2::theme_void() +
+    ggplot2::theme(plot.background = ggplot2::element_rect(fill = "white"))
 
   # ugh
   rm(ht, dat)
   gc()
 
-  if(nchar(title) > 0) title <- paste0("_", title)
-  output <- paste0("curled_sys01_img", image, title)
-  scaling <- 40/3;
+  output <- paste0("curled_", sys_id, "_", image, "-", seed)
+  scaling <- 40 / 3
 
-  for(size in resolutions) {
-    for(type in types) {
-      output_path <- fs::path("docs", size, paste0(output, type))
-      build_msg <- paste("making", output_path)
-      message(build_msg)
-      ggsave(
-        filename = here::here(output_path),
+  for (size in resolutions) {
+    for (type in types) {
+      output_path <- fs::path(
+        output_dir,
+        type,
+        size,
+        paste0(output, ".", type)
+      )
+      message(paste("making", output_path))
+      ggplot2::ggsave(
+        filename = output_path,
         plot = pic,
         width = scaling,
         height = scaling,
@@ -141,5 +189,11 @@ curled <- function(image, title = "", seed = 4,
   }
 }
 
+inputs <- fs::dir_ls(here::here("input")) |>
+  gsub(".*_", "", x = _) |>
+  gsub("\\.jpg", "", x = _)
 
-
+make_all <- FALSE
+if (make_all) {
+  for (input in inputs) curled(input)
+}
