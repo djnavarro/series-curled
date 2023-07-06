@@ -1,11 +1,5 @@
 # changes in this version:
-#  - fewer iterations
-#  - larger plot markers
-#  - longer steps per iteration
-#  - small amount of transparency
-#  - fractal reverts to 10 octaves
-#
-# fairly similar to the version I used for the mural at home
+#   - first attempt at full automation
 
 sys_id <- "04"
 output_dir <- here::here("output", sys_id)

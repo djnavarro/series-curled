@@ -1,11 +1,6 @@
 # changes in this version:
-#  - fewer iterations
-#  - larger plot markers
-#  - longer steps per iteration
-#  - small amount of transparency
-#  - fractal reverts to 10 octaves
-#
-# fairly similar to the version I used for the mural at home
+#  - more detailed curls than the last version
+#  - diagonal patterns in output is caused by bug in create_base_image
 
 sys_id <- "05"
 output_dir <- here::here("output", sys_id)
