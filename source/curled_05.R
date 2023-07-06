@@ -56,6 +56,13 @@ create_base_image <- function(seed) {
   return(ht)
 }
 
+show_base_image <- function(ht) {
+  ggplot2::ggplot(ht, aes(x, y, fill = shade)) +
+    ggplot2::geom_raster(show.legend = FALSE) + 
+    ggplot2::coord_equal() +
+    ggplot2::theme_void()
+}
+
 unfold <- function(
   data,
   iterations,
@@ -182,4 +189,4 @@ curled <- function(
   }
 }
 
-for(s in 21:40) curled(s)
+# for(s in 21:40) curled(s)
