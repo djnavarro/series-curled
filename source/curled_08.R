@@ -1,6 +1,10 @@
 # changes in this version:
 #   - allows more variability in image parameters
 #   - refactors code for the sake of my sanity
+#   - note: the random parameters need tweaking, 
+#     it's occasionally possible for some parts
+#     of the image to go uncovered, causing the 
+#     background to leak through
 
 Rcpp::sourceCpp(here::here("source", "automaton_01.cpp"))
 
