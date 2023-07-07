@@ -4,8 +4,18 @@
 
 Rcpp::sourceCpp(here::here("source", "automaton_01.cpp"))
 
-create_palette <- function(seed, n_shades) {
-  set.seed(seed)
+sample_range <- function(min, max, seed = NULL) {
+  if (!is.null(seed)) set.seed(seed)
+  sample(min:max, size = 1)
+}
+
+sample_uniform <- function(min, max, seed = NULL) {
+  if (!is.null(seed)) set.seed(seed)
+  stats::runif(1, min, max)
+}
+
+sample_palette <- function(n, seed = NULL) {
+  if (!is.null(seed)) set.seed(seed)
   palette_file <- here::here("source", "palette_01.csv")
   palette_data <- readr::read_csv(palette_file, show_col_types = FALSE)
   palette_base <- palette_data |>
@@ -13,35 +23,42 @@ create_palette <- function(seed, n_shades) {
     dplyr::select(-source) |>
     unlist()
   palette_func <- colorRampPalette(palette_base)
-  return(palette_func(n_shades))
+  return(palette_func(n))
 }
 
-create_base_image <- function(seed,
-                              n_rows,
-                              n_cols,
-                              n_shades,
-                              iterations,
-                              max_span) {
+normalise <- function(values, min = 0, max = 1) {
+  value_min <- min(values)
+  value_max <- max(values)
+  unit_values <- (values - value_min) / (value_max - value_min)
+  scaled_values <- (unit_values + min) * (max - min)
+  return(scaled_values)
+}
+
+automaton_values <- function(rows, cols, iterations, span) {
+  mat <- automaton(rows, cols, iterations, span)
+  val <- mat |>
+    as.vector() |>
+    normalise(min = .0001, max = 1) # scale values to a "left-open unit interval"
+  return(val)
+}
+
+create_base_image <- function(seed, rows, cols, shades, iterations, span) {
   set.seed(seed)
-  dat <- automaton(n_rows, n_cols, iterations, max_span)
-  dat <- as.vector(dat)
-  dat <- (dat - min(dat)) / (max(dat) - min(dat))
-  dat <- 1 + (n_shades - 1) * dat
-  dat <- ceiling(dat)
+  if (is.null(cols)) cols <- rows
   img <- tidyr::expand_grid(
-    row = seq(0, 200, length.out = n_rows),
-    col = seq(0, 200, length.out = n_cols),
+    row = seq(0, 200, length.out = rows),
+    col = seq(0, 200, length.out = cols),
     size = 1
   )
-  palette <- create_palette(seed, n_shades)
-  img$shade <- palette[dat]
+  img$value <- automaton_values(rows, cols, iterations, span)
   return(img)
 }
 
+# helper function used only for debugging
 show_base_image <- function(img) {
   ggplot2::ggplot(
     data = img,
-    mapping = ggplot2::aes(x = col, y = row, fill = shade)
+    mapping = ggplot2::aes(x = col, y = row, fill = value)
   ) +
     ggplot2::geom_raster(show.legend = FALSE) +
     ggplot2::coord_equal() +
@@ -50,9 +67,9 @@ show_base_image <- function(img) {
 
 curl_step <- function(data, iteration, scale, octaves, seed) {
   noise_data <- ambient::curl_noise(
-    x = data$x,
-    y = data$y,
-    z = data$z,
+    x = data$x_coord,
+    y = data$y_coord,
+    z = data$z_coord,
     seed = seed,
     generator = ambient::fracture,
     noise = ambient::gen_simplex,
@@ -60,15 +77,14 @@ curl_step <- function(data, iteration, scale, octaves, seed) {
     octaves = octaves
   )
   data$iteration <- iteration
-  data$x <- data$x + noise_data$x * scale
-  data$y <- data$y + noise_data$y * scale
-  data$z <- data$z + noise_data$z * scale
+  data$x_coord <- data$x_coord + noise_data$x * scale
+  data$y_coord <- data$y_coord + noise_data$y * scale
+  data$z_coord <- data$z_coord + noise_data$z * scale
   return(data)
 }
 
 curl_loop <- function(data, seed, iterations, scale, octaves) {
-  data$iteration <- 1
-  data$z <- 1
+  data$z_coord <- data$iteration <- 1
   state <- purrr::accumulate(
     .x = (1:iterations) + 1,
     .f = curl_step,
@@ -83,7 +99,7 @@ curl_loop <- function(data, seed, iterations, scale, octaves) {
 
 create_curl_image <- function(data, seed, iterations, scale, octaves) {
   data |>
-    dplyr::mutate(x = col * .01, y = row * .01) |>
+    dplyr::mutate(x_coord = col * .01, y_coord = row * .01) |>
     curl_loop(
       seed = seed,
       iterations = iterations,
@@ -96,10 +112,9 @@ create_curl_image <- function(data, seed, iterations, scale, octaves) {
     )
 }
 
-compute_axis_limit <- function(data, column, border = .04) {
-  values <- data[[column]][data$iteration == 1]
-  range <- c(1 - max(values), 1 - min(values))
-  limit <- range + c(1, -1) * border
+compute_axis_limit <- function(data, column, trim = .04) {
+  value <- data[[column]][data$iteration == 1]
+  limit <- range(value) + c(1, -1) * trim
   return(limit)
 }
 
@@ -107,22 +122,24 @@ compute_dot_size <- function(raw_size, max_size, curl_strength) {
   raw_size * max_size * curl_strength
 }
 
-create_curl_plot <- function(data, max_dot_size) {
-  ggplot2::ggplot(data) +
-    ggplot2::geom_point(
-      mapping = ggplot2::aes(
-        x = 1 - x,
-        y = 1 - y,
-        color = shade,
-        size = compute_dot_size(size, max_dot_size, curl_strength)
-      ),
-      alpha = 1,
-      stroke = 0,
-      show.legend = FALSE
-    ) +
+compute_dot_shade <- function(value, shades) {
+  shades[ceiling(value * length(shades))]
+}
+
+create_curl_plot <- function(data, shades, dot_scale) {
+  data$dot_colour <- compute_dot_shade(data$value, shades)
+  data$dot_size <- compute_dot_size(data$size, dot_scale, data$curl_strength)
+  data |>
+    ggplot2::ggplot(ggplot2::aes(
+      x = x_coord,
+      y = y_coord,
+      colour = dot_colour,
+      size = dot_size
+    )) +
+    ggplot2::geom_point(alpha = 1, stroke = 0, show.legend = FALSE) +
     ggplot2::coord_cartesian(
-      xlim = compute_axis_limit(data, "x"),
-      ylim = compute_axis_limit(data, "y")
+      xlim = compute_axis_limit(data, "x_coord"),
+      ylim = compute_axis_limit(data, "y_coord")
     ) +
     ggplot2::scale_x_continuous(name = NULL, expand = c(0, 0), breaks = NULL) +
     ggplot2::scale_y_continuous(name = NULL, expand = c(0, 0), breaks = NULL) +
@@ -137,8 +154,8 @@ create_directories <- function(dir, sizes, types) {
   if (!fs::dir_exists(dir)) fs::dir_create(dir)
   for (size in sizes) {
     for (type in types) {
-        subdir <- fs::path(dir, type, size)
-        if (!fs::dir_exists(subdir)) fs::dir_create(subdir)
+      subdir <- fs::path(dir, type, size)
+      if (!fs::dir_exists(subdir)) fs::dir_create(subdir)
     }
   }
 }
@@ -183,6 +200,21 @@ create_extra_images <- function(image_path, sizes, types, dir, name) {
   }
 }
 
+create_image_parameters <- function(seed) {
+  set.seed(seed)
+  list(
+    base_rows = sample_range(min = 50, max = 200),
+    base_cols = NULL,
+    base_iterations = 100000,
+    base_span = sample_range(min = 1, max = 8),
+    curl_scale = sample_uniform(min = .00003, max = .0001),
+    curl_octaves = 10,
+    curl_iterations = sample_range(min = 80, max = 300),
+    plot_dot_scale = sample_range(min = 10, max = 20),
+    plot_shades = sample_palette(n = 1024, seed = seed)
+  )
+}
+
 curled <- function(seed) {
 
   # system identification
@@ -197,43 +229,33 @@ curled <- function(seed) {
   output_types <- c("png", "jpg")
   create_directories(output_dir, output_sizes, output_types)
 
-  # parameters defining the image
-  n_rows <- n_cols <- sample(50:200, 1)
-  n_shades <- 1024
-
-  # parameters specific to the base image
-  base_iterations <- 100000
-  base_max_span <- sample(1:8, 1)
-
-  # parameters specific to the curl noise process
-  curl_scale <- runif(1, min = .00003, max = .0001)
-  curl_octaves <- 10
-  curl_iterations <- sample(80:300, 1)
-
-  # parameter used when mapping to an plot
-  max_dot_size <- sample(10:20, 1)
+  message(paste(message_stem, "making image parameers"))
+  params <- create_image_parameters(seed)
 
   message(paste(message_stem, "making data for base image"))
   base_image_data <- create_base_image(
     seed = seed,
-    n_rows = n_rows,
-    n_cols = n_cols,
-    n_shades = n_shades,
-    iterations = base_iterations,
-    max_span = base_max_span
+    rows = params$base_rows,
+    cols = params$base_cols,
+    iterations = params$base_iterations,
+    span = params$base_span
   )
 
   message(paste(message_stem, "making data for curled image"))
   curl_image_data <- create_curl_image(
     data = base_image_data,
     seed = seed,
-    iterations = curl_iterations,
-    scale = curl_scale,
-    octaves = curl_octaves
+    iterations = params$curl_iterations,
+    scale = params$curl_scale,
+    octaves = params$curl_octaves
   )
 
   message(paste(message_stem, "making plot specification"))
-  curl_plot <- create_curl_plot(curl_image_data, max_dot_size)
+  curl_plot <- create_curl_plot(
+    data = curl_image_data,
+    shades = params$plot_shades,
+    dot_scale = params$plot_dot_scale
+  )
 
   message(paste(message_stem, "making primary image file"))
   image_path <- create_image_file(
