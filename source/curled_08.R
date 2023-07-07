@@ -200,11 +200,17 @@ curled <- function(seed) {
   # parameters defining the image
   n_rows <- n_cols <- sample(50:200, 1)
   n_shades <- 1024
+
+  # parameters specific to the base image
   base_iterations <- 100000
   base_max_span <- sample(1:8, 1)
+
+  # parameters specific to the curl noise process
   curl_scale <- runif(1, min = .00003, max = .0001)
   curl_octaves <- 10
   curl_iterations <- sample(80:300, 1)
+
+  # parameter used when mapping to an plot
   max_dot_size <- sample(10:20, 1)
 
   message(paste(message_stem, "making data for base image"))
