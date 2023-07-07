@@ -229,7 +229,7 @@ curled <- function(seed) {
   output_types <- c("png", "jpg")
   create_directories(output_dir, output_sizes, output_types)
 
-  message(paste(message_stem, "making image parameers"))
+  message(paste(message_stem, "making image parameters"))
   params <- create_image_parameters(seed)
 
   message(paste(message_stem, "making data for base image"))
