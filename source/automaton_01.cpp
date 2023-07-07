@@ -1,3 +1,5 @@
+// variation on the "skipping stone" cellular automaton
+
 #include <Rcpp.h>
 using namespace Rcpp;
 
