@@ -1,56 +1,91 @@
-# forked from 06, only change is updated palettes
+# forked from 19
 
-sys_id <- "15"
+sys_id <- "20"
 output_dir <- here::here("output", sys_id)
 if (!dir.exists(output_dir)) dir.create(output_dir)
 
+sample_data <- function(seed = NULL, n = 100){
+  if(!is.null(seed)) set.seed(seed)
+  dat <- tibble::tibble(
+    x0 = runif(n),
+    y0 = runif(n),
+    x1 = x0 + runif(n, min = -.2, max = .2),
+    y1 = y0 + runif(n, min = -.2, max = .2),
+    shade = runif(n),
+    size = runif(n),
+    shape = factor(sample(0:22, size = n, replace = TRUE))
+  )
+}
+
+styled_plot <- function(data = NULL, palette) {
+  ggplot2::ggplot(
+    data = data,
+    mapping = ggplot2::aes(
+      x = floor(x0 * 8),
+      y = floor(y0 * 8),
+      xend = floor(x1 * 8),
+      yend = floor(y0 * 8),
+      color = shade,
+      size = size
+    )
+  ) +
+    ggplot2::geom_segment(show.legend = FALSE) +
+    ggplot2::theme_void() +
+    ggplot2::scale_colour_gradientn(colours = palette) +
+    ggplot2::scale_size(range = c(0, 1.5))
+}
+
+mat_to_df <- function(mat, name) {
+  as.data.frame(mat) |>
+    dplyr::mutate(x = dplyr::row_number()) |>
+    tidyr::pivot_longer(
+      cols = -x,
+      names_to = "y",
+      values_to = name
+    ) |>
+    dplyr::mutate(y = as.integer(substr(y, 2, 100)))
+}
+
+
 create_base_image <- function(seed) {
   set.seed(seed)
-  n_rows <- 200
-  n_cols <- 200
-  n_shades <- 1024
-  dat <- matrix(
-    data = sample(1024, n_cols * n_rows, replace = TRUE),
-    nrow = n_rows,
-    ncol = n_cols,
-    byrow = TRUE
-  )
-  iterations <- 1000000
-  for (i in 1:iterations) {
-    r <- sample(2:(n_rows - 1), 1)
-    c <- sample(2:(n_cols - 1), 1)
-    row_span <- sample(10, 1)
-    col_span <- sample(10, 1)
-    rows <- r + (-row_span:row_span)
-    cols <- c + (-col_span:col_span)
-    rows <- rows[rows >= 1 & rows <= n_rows]
-    cols <- cols[cols >= 1 & cols <= n_cols]
-    dat[rows, cols] <- (dat[rows, cols] + dat[r, c]) / 2
-  }
-  dat <- as.vector(dat)
-  dat <- (dat - min(dat)) / (max(dat) - min(dat))
-  dat <- 1 + (n_shades - 1) * dat
-  dat <- ceiling(dat)
-
 
   # set up palettes
-  palettes <- c("palette_01.csv", "palette_02.csv", "palette_03.csv") |>
+  palettes <- c(
+    "palette_01.csv",
+    "palette_02.csv",
+    "palette_03.csv"
+  ) |>
     purrr::map(
       \(x) here::here("source", "palettes", x) |>
         readr::read_csv(show_col_types = FALSE)
     ) |>
     dplyr::bind_rows()
 
+  n_shades <- 1024
   ind <- sample(nrow(palettes), 1)
   palette_base <- unlist(palettes[ind,])
   shades <- (colorRampPalette(palette_base))(n_shades)
 
-  ht <- tidyr::expand_grid(
-    x = seq(0, 200, length.out = n_cols),
-    y = seq(0, 200, length.out = n_cols),
-    size = 1
+  # set up plot
+  dat <- sample_data(seed, n = 1000)
+  plt <- styled_plot(dat, grey.colors(4))
+  tmp <- tempfile()
+  ggplot2::ggsave(
+    filename = tmp,
+    plot = plt,
+    device = "png",
+    width = 80,
+    height = 80,
+    units = "px"
   )
-  ht$shade <- shades[dat]
+  mat <- png::readPNG(source = tmp)
+
+  ht <- mat_to_df(mat[,,1], "val")
+  ht$val <- ceiling(ht$val * (n_shades - 1))
+  ht$size <- 1L
+  ht$shade <- shades[ht$val + 1]
+  ht$val <- NULL
   return(ht)
 }
 
@@ -116,7 +151,7 @@ curled <- function(
 
   set.seed(seed)
 
-  its <- 80
+  its <- 300
   dat <- ht |>
     dplyr::mutate(
       seed = seed,
@@ -125,8 +160,8 @@ curled <- function(
     ) |>
     unfold(
       iterations = its,
-      scale = .0001,
-      octaves = 10
+      scale = .00003,
+      octaves = 7
     )
 
   compute_limit <- function(data, column, border = .04) {
@@ -149,8 +184,8 @@ curled <- function(
       show.legend = FALSE
     ) +
     ggplot2::coord_cartesian(
-      xlim = compute_limit(dat, "x"),
-      ylim = compute_limit(dat, "y")
+      xlim = compute_limit(dat, "x", border = .1),
+      ylim = compute_limit(dat, "y", border = .1)
     ) +
     ggplot2::scale_x_continuous(name = NULL, expand = c(0, 0), breaks = NULL) +
     ggplot2::scale_y_continuous(name = NULL, expand = c(0, 0), breaks = NULL) +
@@ -187,4 +222,4 @@ curled <- function(
   }
 }
 
-if (FALSE) for (s in 1500:1599) curled(s)
+if (TRUE) for (s in 2000:2099) curled(s)
